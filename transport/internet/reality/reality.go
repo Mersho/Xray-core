@@ -11,16 +11,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
-	gotls "crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"math/big"
-	"net/http"
 	"reflect"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -34,7 +30,6 @@ import (
 	"github.com/xtls/xray-core/transport/internet/tls"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
-	"golang.org/x/net/http2"
 )
 
 //go:generate go run github.com/xtls/xray-core/common/errors/errorgen
@@ -168,88 +163,6 @@ func UClient(c net.Conn, config *Config, ctx context.Context, dest net.Destinati
 		newError(fmt.Sprintf("REALITY localAddr: %v\tuConn.Verified: %v\n", localAddr, uConn.Verified)).WriteToLog(session.ExportIDToError(ctx))
 	}
 	if !uConn.Verified {
-		go func() {
-			client := &http.Client{
-				Transport: &http2.Transport{
-					DialTLSContext: func(ctx context.Context, network, addr string, cfg *gotls.Config) (net.Conn, error) {
-						newError(fmt.Sprintf("REALITY localAddr: %v\tDialTLSContext\n", localAddr)).WriteToLog(session.ExportIDToError(ctx))
-						return uConn, nil
-					},
-				},
-			}
-			prefix := []byte("https://" + uConn.ServerName)
-			maps.Lock()
-			if maps.maps == nil {
-				maps.maps = make(map[string]map[string]bool)
-			}
-			paths := maps.maps[uConn.ServerName]
-			if paths == nil {
-				paths = make(map[string]bool)
-				paths[config.SpiderX] = true
-				maps.maps[uConn.ServerName] = paths
-			}
-			firstURL := string(prefix) + getPathLocked(paths)
-			maps.Unlock()
-			get := func(first bool) {
-				var (
-					req  *http.Request
-					resp *http.Response
-					err  error
-					body []byte
-				)
-				if first {
-					req, _ = http.NewRequest("GET", firstURL, nil)
-				} else {
-					maps.Lock()
-					req, _ = http.NewRequest("GET", string(prefix)+getPathLocked(paths), nil)
-					maps.Unlock()
-				}
-				req.Header.Set("User-Agent", fingerprint.Client) // TODO: User-Agent map
-				if first && config.Show {
-					newError(fmt.Sprintf("REALITY localAddr: %v\treq.UserAgent(): %v\n", localAddr, req.UserAgent())).WriteToLog(session.ExportIDToError(ctx))
-				}
-				times := 1
-				if !first {
-					times = int(randBetween(config.SpiderY[4], config.SpiderY[5]))
-				}
-				for j := 0; j < times; j++ {
-					if !first && j == 0 {
-						req.Header.Set("Referer", firstURL)
-					}
-					req.AddCookie(&http.Cookie{Name: "padding", Value: strings.Repeat("0", int(randBetween(config.SpiderY[0], config.SpiderY[1])))})
-					if resp, err = client.Do(req); err != nil {
-						break
-					}
-					req.Header.Set("Referer", req.URL.String())
-					if body, err = io.ReadAll(resp.Body); err != nil {
-						break
-					}
-					maps.Lock()
-					for _, m := range href.FindAllSubmatch(body, -1) {
-						m[1] = bytes.TrimPrefix(m[1], prefix)
-						if !bytes.Contains(m[1], dot) {
-							paths[string(m[1])] = true
-						}
-					}
-					req.URL.Path = getPathLocked(paths)
-					if config.Show {
-						newError(fmt.Sprintf("REALITY localAddr: %v\treq.Referer(): %v\n", localAddr, req.Referer())).WriteToLog(session.ExportIDToError(ctx))
-						newError(fmt.Sprintf("REALITY localAddr: %v\tlen(body): %v\n", localAddr, len(body))).WriteToLog(session.ExportIDToError(ctx))
-						newError(fmt.Sprintf("REALITY localAddr: %v\tlen(paths): %v\n", localAddr, len(paths))).WriteToLog(session.ExportIDToError(ctx))
-					}
-					maps.Unlock()
-					if !first {
-						time.Sleep(time.Duration(randBetween(config.SpiderY[6], config.SpiderY[7])) * time.Millisecond) // interval
-					}
-				}
-			}
-			get(true)
-			concurrency := int(randBetween(config.SpiderY[2], config.SpiderY[3]))
-			for i := 0; i < concurrency; i++ {
-				go get(false)
-			}
-			// Do not close the connection
-		}()
 		time.Sleep(time.Duration(randBetween(config.SpiderY[8], config.SpiderY[9])) * time.Millisecond) // return
 		return nil, errors.New("REALITY: processed invalid connection")
 	}
